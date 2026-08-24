@@ -1,0 +1,4 @@
+{
+    "llm_model": "deepseek-chat",
+    "system_prompt_file": null
+}

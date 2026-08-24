@@ -1,0 +1,10 @@
+[
+    {
+        "table_name": "bank_loan",
+        "schema_content": "表bank_loan：贷款表，字段 loan_id,customer_id,loan_amount,loan_date,status"
+    },
+    {
+        "table_name": "bank_customer",
+        "schema_content": "表bank_customer：客户表，字段 customer_id,name,age,region,register_date"
+    }
+]
