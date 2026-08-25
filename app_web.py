@@ -3,42 +3,60 @@ import json
 import time
 import re
 import logging
+import sys
 from dotenv import load_dotenv
 import chromadb
 from chromadb.utils import embedding_functions
 import requests
 import streamlit as st
 
-# ========== 1、加载环境变量 ==========
-load_dotenv()
+# ========== 1、区分云端/本地：只有Streamlit Cloud才读取st.secrets ==========
+is_cloud = "STREAMLIT_SERVER" in os.environ
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
-DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD"))
-TOP_N = int(os.getenv("TOP_N"))
+if is_cloud:
+    # 云端：读取平台Secrets
+    DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+    DEEPSEEK_BASE_URL = st.secrets["DEEPSEEK_BASE_URL"]
+    # 云端兜底默认参数
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD", "0.7"))
+    TOP_N = int(os.getenv("TOP_N", "2"))
+else:
+    # 本地开发：只读取 .env，完全不触碰 st.secrets，避免报错
+    load_dotenv()
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL")
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD"))
+    TOP_N = int(os.getenv("TOP_N"))
 
 with open("config.json", "r", encoding="utf-8") as f:
     app_config = json.load(f)
 
-# ========== 2、日志配置（只写文件） ==========
-os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[logging.FileHandler("logs/app_web.log", encoding="utf-8")]
-)
+# ========== 2、日志配置（保留之前修改好的） ==========
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.handlers.clear()
 
+if is_cloud:
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(console_handler)
+else:
+    os.makedirs("logs", exist_ok=True)
+    file_handler = logging.FileHandler("logs/app_web.log", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(file_handler)
 # ========== 3、加载表schema ==========
 def load_table_schemas(json_path: str = "data/table_schema.json") -> list:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-# ========== 4、初始化Chroma（缓存，避免每次刷新重建） ==========
+# ========== 4、初始化Chroma（缓存，避免单次会话重复重建） ==========
 @st.cache_resource
 def init_chroma():
-    client = chromadb.PersistentClient(path="./chroma_db")
+    # 云端使用内存模式，不读写磁盘
+    client = chromadb.Client()
     embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=EMBEDDING_MODEL
     )
