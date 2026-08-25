@@ -6,9 +6,9 @@ import logging
 import sys
 from dotenv import load_dotenv
 import chromadb
-from chromadb.utils import embedding_functions
 import requests
 import streamlit as st
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 # ========== 1、区分云端/本地：只有Streamlit Cloud才读取st.secrets ==========
 is_cloud = "STREAMLIT_SERVER" in os.environ
