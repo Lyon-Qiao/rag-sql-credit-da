@@ -72,3 +72,8 @@ streamlit run app_web.py
 ## 📷 项目截图
 ![系统截图](./screenshot.png)
 > 将网页截图保存，命名`screenshot.png`放在项目根目录。
+
+## 📌 工程踩坑记录
+> 曾经尝试部署至Streamlit Cloud，发现Chroma在缺少sentence‑transformers依赖时，会自动降级使用内置ONNX量化Embedding模型。
+> 相同文本，完整模型与量化模型向量空间发生偏移，线上distance数值整体变大，检索过滤逻辑失效。
+> 本项目显式指定`SentenceTransformerEmbeddingFunction`规避该问题；当前版本优先保证本地环境稳定可复现。
