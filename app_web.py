@@ -52,42 +52,40 @@ def load_table_schemas(json_path: str = "data/table_schema.json") -> list:
     with open(json_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-# ========== 4、初始化Chroma（缓存，避免单次会话重复重建） ==========
 # ========== 4、初始化Chroma（内存模式，适配Streamlit云端） ==========
 @st.cache_resource
 def init_chroma():
-    # 云端使用内存模式，不读写磁盘（免费实例磁盘会丢失）
     client = chromadb.Client()
 
-    # 使用chromadb内置ONNX模型，无需联网下载，适配云端环境
     embedding_func = DefaultEmbeddingFunction()
+
+    # ✅修复：先判断集合是否存在，存在就删掉整个集合，替代 collection.delete()
+    try:
+        client.delete_collection(name="bank_table_schema")
+        print(f"【DEBUG】旧向量集合已删除")
+    except Exception:
+        # 集合不存在直接跳过，不抛异常
+        pass
 
     collection = client.get_or_create_collection(
         name="bank_table_schema",
         embedding_function=embedding_func
     )
 
-    # 调试：打印当前集合文档数量
     doc_count = collection.count()
     print(f"【DEBUG】向量库文档总数量: {doc_count}")
 
-    # 清空旧数据，防止损坏的embedding残留
-    collection.delete()
-
-    # 重新灌入全部表schema
-    if collection.count() == 0:
-        schema_list = load_table_schemas()
-        collection.add(
-            documents=[item["schema_content"] for item in schema_list],
-            ids=[item["table_name"] for item in schema_list],
-            metadatas=[{"table_name": item["table_name"]} for item in schema_list]
-        )
-        logger.info(f"向量库初始化完成，入库 {len(schema_list)} 张表")
-        print(f"【DEBUG】重建完成，入库 {len(schema_list)} 张表")
+    schema_list = load_table_schemas()
+    collection.add(
+        documents=[item["schema_content"] for item in schema_list],
+        ids=[item["table_name"] for item in schema_list],
+        metadatas=[{"table_name": item["table_name"]} for item in schema_list]
+    )
+    logger.info(f"向量库初始化完成，入库 {len(schema_list)} 张表")
+    print(f"【DEBUG】重建完成，入库 {len(schema_list)} 张表")
 
     return collection
 
-# 执行初始化，拿到全局collection对象
 collection = init_chroma()
 
 # ========== 5、向量检索（带距离阈值，返回详情供页面展示） ==========
