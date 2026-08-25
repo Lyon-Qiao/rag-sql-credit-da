@@ -53,17 +53,32 @@ def load_table_schemas(json_path: str = "data/table_schema.json") -> list:
         return json.load(f)
 
 # ========== 4、初始化Chroma（缓存，避免单次会话重复重建） ==========
+# ========== 4、初始化Chroma（内存模式，适配Streamlit云端） ==========
 @st.cache_resource
 def init_chroma():
-    # 云端使用内存模式，不读写磁盘
+    # 云端使用内存模式，不读写磁盘（免费实例磁盘会丢失）
     client = chromadb.Client()
-    embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL
+
+    # 强制走国内镜像下载embedding模型，避免huggingface网络损坏
+    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
+    embedding_func = SentenceTransformerEmbeddingFunction(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
+
     collection = client.get_or_create_collection(
         name="bank_table_schema",
         embedding_function=embedding_func
     )
+
+    # 调试：打印当前集合文档数量
+    doc_count = collection.count()
+    print(f"【DEBUG】向量库文档总数量: {doc_count}")
+
+    # 清空旧数据，防止损坏的embedding残留
+    collection.delete()
+
+    # 重新灌入全部表schema
     if collection.count() == 0:
         schema_list = load_table_schemas()
         collection.add(
@@ -72,8 +87,11 @@ def init_chroma():
             metadatas=[{"table_name": item["table_name"]} for item in schema_list]
         )
         logger.info(f"向量库初始化完成，入库 {len(schema_list)} 张表")
+        print(f"【DEBUG】重建完成，入库 {len(schema_list)} 张表")
+
     return collection
 
+# 执行初始化，拿到全局collection对象
 collection = init_chroma()
 
 # ========== 5、向量检索（带距离阈值，返回详情供页面展示） ==========
