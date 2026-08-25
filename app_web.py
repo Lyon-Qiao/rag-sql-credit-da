@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import chromadb
 import requests
 import streamlit as st
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 # ========== 1、区分云端/本地：只有Streamlit Cloud才读取st.secrets ==========
 is_cloud = "STREAMLIT_SERVER" in os.environ
@@ -59,12 +59,8 @@ def init_chroma():
     # 云端使用内存模式，不读写磁盘（免费实例磁盘会丢失）
     client = chromadb.Client()
 
-    # 强制走国内镜像下载embedding模型，避免huggingface网络损坏
-    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
-
-    embedding_func = SentenceTransformerEmbeddingFunction(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    # 使用chromadb内置ONNX模型，无需联网下载，适配云端环境
+    embedding_func = DefaultEmbeddingFunction()
 
     collection = client.get_or_create_collection(
         name="bank_table_schema",
