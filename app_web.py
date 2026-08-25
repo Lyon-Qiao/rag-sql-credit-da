@@ -48,9 +48,17 @@ else:
     file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
     logger.addHandler(file_handler)
 # ========== 3、加载表schema ==========
-def load_table_schemas(json_path: str = "data/table_schema.json") -> list:
+def load_table_schemas(json_path: str = None) -> list:
+    if json_path is None:
+        # 获取当前app_web.py脚本所在目录，跨环境绝对路径
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        json_path = os.path.join(base_dir, "data", "table_schema.json")
+
+    print(f"【DEBUG】schema json完整路径: {json_path}")
     with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    print(f"【DEBUG】成功读取schema，共 {len(data)} 张数据表")
+    return data
 
 # ========== 4、初始化Chroma（内存模式，适配Streamlit云端） ==========
 @st.cache_resource
@@ -76,6 +84,7 @@ def init_chroma():
     print(f"【DEBUG】向量库文档总数量: {doc_count}")
 
     schema_list = load_table_schemas()
+    print(f"【DEBUG】load_table_schemas读取到schema数量：{len(schema_list)}")
     collection.add(
         documents=[item["schema_content"] for item in schema_list],
         ids=[item["table_name"] for item in schema_list],
