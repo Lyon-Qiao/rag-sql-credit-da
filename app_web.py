@@ -165,7 +165,7 @@ if submit and user_input.strip():
 
     st.subheader("🔍 向量检索结果")
     for i, d in enumerate(detail_list, 1):
-        status = "✅ 通过阈值" if d["passed"] else "❌ 低于阈值，已过滤"
+        status = "✅ 通过阈值" if d["passed"] else "❌ 高于阈值，已过滤"
         st.write(f"**候选 {i}**：distance = `{d['distance']}` → {status}")
         with st.expander("查看该候选schema内容", expanded=False):
             st.code(d["doc"], language="sql")
