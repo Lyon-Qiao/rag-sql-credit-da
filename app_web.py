@@ -28,7 +28,7 @@ else:
     DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD"))
-    TOP_N = int(os.getenv("TOP_N"))
+    TOP_N = int(os.getenv("TOP_N",3))
 
 with open("config.json", "r", encoding="utf-8") as f:
     app_config = json.load(f)
