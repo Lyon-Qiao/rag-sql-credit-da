@@ -3,96 +3,60 @@ import json
 import time
 import re
 import logging
-import sys
 from dotenv import load_dotenv
 import chromadb
+from chromadb.utils import embedding_functions
 import requests
 import streamlit as st
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
-# ========== 1、区分云端/本地：只有Streamlit Cloud才读取st.secrets ==========
-is_cloud = "STREAMLIT_SERVER" in os.environ
+# ========== 1、加载环境变量 ==========
+load_dotenv()
 
-if is_cloud:
-    # 云端：读取平台Secrets
-    DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
-    DEEPSEEK_BASE_URL = st.secrets["DEEPSEEK_BASE_URL"]
-    # 云端兜底默认参数
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD", "0.7"))
-    TOP_N = int(os.getenv("TOP_N", "2"))
-else:
-    # 本地开发：只读取 .env，完全不触碰 st.secrets，避免报错
-    load_dotenv()
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL")
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD"))
-    TOP_N = int(os.getenv("TOP_N",3))
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY","")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL","all-MiniLM-L6-v2")
+DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD","0.85"))
+TOP_N = int(os.getenv("TOP_N","3"))
 
 with open("config.json", "r", encoding="utf-8") as f:
     app_config = json.load(f)
 
-# ========== 2、日志配置（保留之前修改好的） ==========
+# ========== 2、日志配置（只写文件） ==========
+os.makedirs("logs", exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[logging.FileHandler("logs/app_web.log", encoding="utf-8")]
+)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.handlers.clear()
 
-if is_cloud:
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-    logger.addHandler(console_handler)
-else:
-    os.makedirs("logs", exist_ok=True)
-    file_handler = logging.FileHandler("logs/app_web.log", encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
-    logger.addHandler(file_handler)
 # ========== 3、加载表schema ==========
 def load_table_schemas(json_path: str = None) -> list:
     if json_path is None:
-        # 获取当前app_web.py脚本所在目录，跨环境绝对路径
         base_dir = os.path.dirname(os.path.abspath(__file__))
         json_path = os.path.join(base_dir, "data", "table_schema.json")
-
-    print(f"【DEBUG】schema json完整路径: {json_path}")
     with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    print(f"【DEBUG】成功读取schema，共 {len(data)} 张数据表")
-    return data
+        return json.load(f)
 
-# ========== 4、初始化Chroma（内存模式，适配Streamlit云端） ==========
+# ========== 4、初始化Chroma（缓存，避免每次刷新重建） ==========
 @st.cache_resource
 def init_chroma():
-    client = chromadb.Client()
-
-    embedding_func = DefaultEmbeddingFunction()
-
-    # ✅修复：先判断集合是否存在，存在就删掉整个集合，替代 collection.delete()
-    try:
-        client.delete_collection(name="bank_table_schema")
-        print(f"【DEBUG】旧向量集合已删除")
-    except Exception:
-        # 集合不存在直接跳过，不抛异常
-        pass
-
+    client = chromadb.PersistentClient(path="./chroma_db")
+    embedding_func = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=EMBEDDING_MODEL
+    )
     collection = client.get_or_create_collection(
         name="bank_table_schema",
         embedding_function=embedding_func
     )
-
-    doc_count = collection.count()
-    print(f"【DEBUG】向量库文档总数量: {doc_count}")
-
-    schema_list = load_table_schemas()
-    print(f"【DEBUG】load_table_schemas读取到schema数量：{len(schema_list)}")
-    collection.add(
-        documents=[item["schema_content"] for item in schema_list],
-        ids=[item["table_name"] for item in schema_list],
-        metadatas=[{"table_name": item["table_name"]} for item in schema_list]
-    )
-    logger.info(f"向量库初始化完成，入库 {len(schema_list)} 张表")
-    print(f"【DEBUG】重建完成，入库 {len(schema_list)} 张表")
-
+    if collection.count() == 0:
+        schema_list = load_table_schemas()
+        collection.add(
+            documents=[item["schema_content"] for item in schema_list],
+            ids=[item["table_name"] for item in schema_list],
+            metadatas=[{"table_name": item["table_name"]} for item in schema_list]
+        )
+        logger.info(f"向量库初始化完成，入库 {len(schema_list)} 张表")
     return collection
 
 collection = init_chroma()
