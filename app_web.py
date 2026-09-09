@@ -8,6 +8,10 @@ import chromadb
 from chromadb.utils import embedding_functions
 import requests
 import streamlit as st
+import sqlparse
+from sqlparse.tokens import Keyword, DML, Wildcard
+
+
 
 # ========== 1、加载环境变量 ==========
 load_dotenv()
@@ -15,7 +19,7 @@ load_dotenv()
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY","")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL","https://api.deepseek.com/v1")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL","all-MiniLM-L6-v2")
-DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD","0.85"))
+DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD","0.7"))
 TOP_N = int(os.getenv("TOP_N","3"))
 
 with open("config.json", "r", encoding="utf-8") as f:
@@ -90,13 +94,72 @@ def clean_sql_markdown(text: str) -> str:
     text = re.sub(r"```\s*$", "", text, flags=re.MULTILINE)
     return text.strip()
 
+def validate_generated_sql(sql: str) -> tuple[bool, str]:
+    """
+    SQL静态安全校验
+    返回 (是否合法, 错误提示)
+    检测：SELECT * 、无ON条件的JOIN
+    """
+    sql = sql.strip()
+    if not sql:
+        return False, "生成SQL为空"
+
+    parsed = sqlparse.parse(sql)[0]
+    tokens_all = list(parsed.flatten())
+
+    # ===== 检测 SELECT 后面是否存在通配符 Wildcard(*) =====
+    has_select_star = False
+    for i, token in enumerate(tokens_all):
+        if token.ttype is DML and token.value.upper() == "SELECT":
+            # 从SELECT之后向后遍历，跳过空白
+            for offset in range(i + 1, len(tokens_all)):
+                tk = tokens_all[offset]
+                if tk.is_whitespace:
+                    continue
+                # 命中通配符 *
+                if tk.ttype == Wildcard:
+                    has_select_star = True
+                    break
+                # 碰到FROM/WHERE/JOIN，字段列表结束，停止查找
+                if tk.ttype is Keyword and tk.value.upper() in ("FROM", "WHERE", "JOIN"):
+                    break
+            if has_select_star:
+                break
+    if has_select_star:
+        return False, "SQL校验不通过：禁止使用 SELECT *，请显式指定查询字段"
+
+    # ===== 检测 JOIN 但是没有 ON 条件 =====
+    join_idx_list = []
+    for idx, tok in enumerate(tokens_all):
+        if tok.ttype is Keyword and tok.value.upper() == "JOIN":
+            join_idx_list.append(idx)
+
+    for j_idx in join_idx_list:
+        has_on = False
+        for offset in range(j_idx + 1, len(tokens_all)):
+            t = tokens_all[offset]
+            if t.is_whitespace:
+                continue
+            if t.ttype is Keyword and t.value.upper() == "ON":
+                has_on = True
+                break
+            #遇到下一个大关键字，说明到从句边界，还没出现ON
+            if t.ttype is Keyword and t.value.upper() in {"WHERE","GROUP","ORDER","LIMIT"}:
+                break
+        if not has_on:
+            return False, "SQL校验不通过：检测到JOIN语句缺少ON关联条件，存在笛卡尔积风险"
+
+    return True, "ok"
+
 # ========== 8、调用LLM ==========
 SYSTEM_PROMPT = """
 你是数据分析助手，根据给到的数据表schema，把用户自然语言转为SQL。
 规则：
 1. 只允许SELECT查询语句；禁止drop、alter、delete等修改语句。
-2. 如果用户需求模糊、缺少指标、检索到的表不匹配业务，直接输出：⚠️需求模糊，请补充指标信息。
-3. 只输出最终结果，不要多余解释。
+2. 严禁使用 SELECT *，必须显式写出需要查询的字段名称。
+3. 如果使用JOIN，必须书写ON关联条件，禁止不带ON直接JOIN，避免笛卡尔积；无业务需求不要强行做多表JOIN。
+4. 如果用户需求模糊、缺少指标、检索到的表不匹配业务，直接输出：⚠️需求模糊，请补充指标信息。
+5. 只输出最终SQL，不要多余解释。
 """
 
 def call_llm(user_question: str, context_schema: str):
@@ -203,3 +266,27 @@ if submit and user_input.strip():
         c3.metric("输出token", stats["completion_tokens"])
         c4.metric("总token", stats["total_tokens"])
         c5.metric("估算费用", f"¥{stats['est_cost']}")
+
+
+# # ===== 测试代码，本地单独验证validate_generated_sql =====
+# if __name__ == "__main__":
+#     test_cases = [
+#         # 1. select * 预期拦截
+#         "SELECT * FROM BankCustomer",
+#         # 2. 正常单表
+#         "SELECT customer_id, customer_name FROM BankCustomer",
+#         # 3. 裸JOIN无ON，预期拦截
+#         "SELECT customer_name, backlog_id FROM BankCustomer JOIN Backlog WHERE customer_id = 1001",
+#         # 4. 合法JOIN带ON
+#         "SELECT customer_name, backlog_id FROM BankCustomer JOIN Backlog ON BankCustomer.customer_id = Backlog.customer_id WHERE customer_id = 1001",
+#         # 5. ON存在但是关联字段写错（静态检查放行，业务错误）
+#         "SELECT customer_name, backlog_id FROM BankCustomer JOIN Backlog ON BankCustomer.customer_id = Backlog.backlog_id",
+#         # 6. 乘法*，不拦截
+#         "SELECT 2 * 3 AS result FROM BankCustomer"
+#     ]
+
+#     for idx, sql_text in enumerate(test_cases, 1):
+#         res, msg = validate_generated_sql(sql_text)
+#         print(f"【Case{idx}】SQL:\n{sql_text}")
+#         print(f"结果: {res}, 提示: {msg}\n")
+
